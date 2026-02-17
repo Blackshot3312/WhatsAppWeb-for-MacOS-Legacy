@@ -11,6 +11,7 @@ Um client leve e nativo de WhatsApp Web focado em compatibilidade para versões 
 ## 💻 Compatibilidade
 - **Sistema Operacional:** macOS 11.0 (Big Sur) ou superior.
 - **Arquitetura:** Intel e Apple Silicon (Universal).
+- **Funções:** Suporte a notificações Banner e aviso no Dock
 
 ## 🛠️ Como compilar
 Para rodar este projeto localmente:
