@@ -54,6 +54,7 @@ class WebViewStore: NSObject, ObservableObject, WKNavigationDelegate, WKScriptMe
         
         // Adicionar script para monitorar notificações
         setupNotificationMonitoring()
+        injectCustomStyles()
         
         // Carregar WhatsApp Web
         if let url = URL(string: "https://web.whatsapp.com") {
@@ -74,33 +75,84 @@ class WebViewStore: NSObject, ObservableObject, WKNavigationDelegate, WKScriptMe
     private func setupNotificationMonitoring() {
         let userContentController = webView.configuration.userContentController
         
-        // Script para interceptar título da página (onde ficam as notificações)
-        let titleObserverScript = """
-        // Observar mudanças no título
-        var lastTitle = document.title;
-        
-        setInterval(function() {
-            if (document.title !== lastTitle) {
-                lastTitle = document.title;
-                window.webkit.messageHandlers.titleChanged.postMessage(document.title);
+        let injectionJS = """
+        (function() {
+            // 1. Sobrescreve a API de Notificação do Navegador
+            window.Notification = function(title, options) {
+                window.webkit.messageHandlers.notificationHandler.postMessage({
+                    title: title,
+                    body: options ? options.body : ""
+                });
+                
+                // Retorna um objeto "dummy" para não quebrar o script do WhatsApp
+                return {
+                    close: function() {},
+                    onclick: function() {}
+                };
+            };
+            
+            // Mantém a permissão como 'granted' para o WhatsApp tentar enviar
+            window.Notification.permission = 'granted';
+            window.Notification.requestPermission = function(cb) {
+                if (cb) cb('granted');
+                return Promise.resolve('granted');
+            };
+
+            // 2. Observer de Título (Backup para o ícone do Dock)
+            var target = document.querySelector('title');
+            if (target) {
+                var observer = new MutationObserver(function() {
+                    window.webkit.messageHandlers.notificationHandler.postMessage({
+                        type: "titleUpdate",
+                        title: document.title
+                    });
+                });
+                observer.observe(target, { subtree: true, characterData: true, childList: true });
             }
-        }, 1000);
-        
-        // Observar mudanças no favicon (indica nova mensagem)
-        var lastFavicon = '';
-        setInterval(function() {
-            var favicon = document.querySelector('link[rel*="icon"]');
-            if (favicon && favicon.href !== lastFavicon) {
-                lastFavicon = favicon.href;
-                window.webkit.messageHandlers.faviconChanged.postMessage(favicon.href);
-            }
-        }, 1000);
+        })();
         """
         
-        let script = WKUserScript(source: titleObserverScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        let script = WKUserScript(source: injectionJS, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        userContentController.removeAllUserScripts()
         userContentController.addUserScript(script)
-        userContentController.add(self, name: "titleChanged")
-        userContentController.add(self, name: "faviconChanged")
+        
+        userContentController.removeScriptMessageHandler(forName: "notificationHandler")
+        userContentController.add(self, name: "notificationHandler")
+        
+        
+    }
+    
+    private func injectCustomStyles() {
+        // Seletor comum para o banner de download (pode variar, mas este cobre a maioria)
+        let css = """
+        /* Esconde o banner de 'Baixe o WhatsApp' */
+        span[data-icon='down-context'],
+        div._akau,
+        div[role='alert'] + div > a[href*='download'] {
+            display: none !important;
+        }
+        
+        /* Remove a barra lateral de aviso de download se aparecer */
+        .copyable-area + div[class*='_ak'] {
+            display: none !important;
+        }
+        """
+        
+        let js = "var style = document.createElement('style'); style.innerHTML = `\(css)`; document.head.appendChild(style);"
+        
+        // Injeta o script para rodar toda vez que a página carregar
+        let userScript = WKUserScript(
+            source: js,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+        webView.configuration.userContentController.addUserScript(userScript)
+        
+        _ = """
+        img, [role='img'], [style*='border-radius: 50%'] {
+            border-radius: 50% !important;
+        }
+        """
     }
     
     // MARK: - WKScriptMessageHandler
@@ -113,28 +165,36 @@ class WebViewStore: NSObject, ObservableObject, WKNavigationDelegate, WKScriptMe
             checkForNewMessages()
         }
     }
-    func userContentController(_ userContentController: WKUserContentController,
-                               didReceive message: WKScriptMessage) {
-        if message.name == "titleChanged",
-           let title = message.body as? String {
-            handleTitleChange(title)
-        } else if message.name == "faviconChanged" {
-            checkForNewMessages()
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "notificationHandler" else { return }
+        
+        if let dict = message.body as? [String: Any] {
+            // Se for uma notificação real interceptada (Banner)
+            if let title = dict["title"] as? String, let body = dict["body"] as? String {
+                notificationManager.showImmediateNotification(title: title, body: body)
+            }
+            // Se for apenas o update do título (Badge no Dock)
+            else if let type = dict["type"] as? String, type == "titleUpdate", let title = dict["title"] as? String {
+                handleTitleChange(title)
+            }
         }
     }
 
     
     private func handleTitleChange(_ title: String) {
-
-        if title == "WhatsApp" {
+        // Se o título voltou ao normal, limpamos o badge
+        if title == "WhatsApp" || title == "WhatsApp" {
             notificationManager.clearBadge()
             return
         }
 
-        if title.hasPrefix("(") {
-            let components = title.components(separatedBy: ")")
-            if let countString = components.first?.replacingOccurrences(of: "(", with: ""),
-               let count = Int(countString) {
+        // Procura por números entre parênteses usando RegEx simples ou componentes
+        if title.contains("(") && title.contains(")") {
+            let scanner = Scanner(string: title)
+            _ = scanner.scanUpToString("(")
+            _ = scanner.scanString("(")
+            
+            if let countString = scanner.scanUpToString(")"), let count = Int(countString) {
                 notificationManager.showNotification(messageCount: count)
             }
         }

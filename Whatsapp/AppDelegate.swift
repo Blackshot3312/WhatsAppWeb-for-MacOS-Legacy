@@ -4,28 +4,25 @@ import SwiftUI
 
 class AppDelegate: NSObject,
                    NSApplicationDelegate,
-                   UNUserNotificationCenterDelegate {
+                   UNUserNotificationCenterDelegate,
+                   NSWindowDelegate{
 
     var webViewStore: WebViewStore?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        
-        // Sistema de notificações (inicial)
-        UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(
-            options: [.alert, .sound, .badge]
-        ) { granted, error in
-            if granted {
-                print("Permissão de notificação concedida")
-            } else if let error = error {
-                print("Erro ao solicitar permissão: \(error.localizedDescription)")
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            if let firstWindow = NSApplication.shared.windows.first {
+                firstWindow.delegate = self
+                
+                //firstWindow.titleVisibility = .hidden
+                //firstWindow.titlebarAppearsTransparent = true
+                //firstWindow.styleMask.insert(.fullSizeContentView)
             }
         }
 
-        // Manu global
         setupMenu()
     }
-
     // MARK: - Menu global
 
     private func setupMenu() {
@@ -37,6 +34,17 @@ class AppDelegate: NSObject,
 
         let appMenu = NSMenu(title: "Whatsapp")
         appMenuItem.submenu = appMenu
+        
+        let reopenWindowItem = NSMenuItem(
+            title: "Abrir Janela do WhatsApp",
+            action: #selector(reopenMainWindow),
+            keyEquivalent: "o"
+        )
+        reopenWindowItem.keyEquivalentModifierMask = [.command]
+        reopenWindowItem.target = self
+        appMenu.addItem(reopenWindowItem)
+
+        appMenu.addItem(NSMenuItem.separator())
 
         let clearSessionItem = NSMenuItem(
             title: "Limpar Sessão",
@@ -55,6 +63,13 @@ class AppDelegate: NSObject,
             keyEquivalent: "q"
         )
         appMenu.addItem(quitItem)
+        
+        
+    }
+    
+    @objc private func reopenMainWindow() {
+        NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
     @objc private func clearSession() {
@@ -63,19 +78,30 @@ class AppDelegate: NSObject,
 
     // MARK: - UNUserNotificationCenterDelegate
 
-    // Mostrar notificações mesmo com app em foco
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler:
                                 @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound, .badge])
     }
-
-    // Clique na notificação
+    
+    //Notification System
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         NSApplication.shared.activate(ignoringOtherApps: true)
         completionHandler()
+    }
+    
+
+    // MARK: - Gerenciamento de Janela
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false
     }
 }
